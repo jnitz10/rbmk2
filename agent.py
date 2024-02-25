@@ -91,6 +91,7 @@ class Agent:
             # PER params
             alpha: float = 0.2,
             beta: float = 0.6,
+            beta_amortization : int = 3000000,
             prior_eps: float = 1e-6,
             # Categorical DQN params
             v_min: float = -10.0,
@@ -122,6 +123,7 @@ class Agent:
         # PER
         # TODO: decide on how to implement saving/loading of buffer
         self.beta = beta
+        self.beta_amortization = beta_amortization
         self.prior_eps = prior_eps
         self.memory = ReplayBuffer(
             self.obs_space, n_envs=n_envs,
@@ -205,7 +207,7 @@ class Agent:
             self.store_transition(transition)
             obses = next_obses
 
-            fraction = min(self.learn_step_counter / 2000000, 1.0)
+            fraction = min(self.learn_step_counter / self.beta_amortization, 1.0)
             self.beta = self.beta + fraction * (1.0 - self.beta)
 
             loss = self.learn()
