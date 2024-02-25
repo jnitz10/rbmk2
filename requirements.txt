@@ -1,5 +1,4 @@
-torch==2.2.1
-torchvision==0.17.1
+torch
 tqdm==4.66.2
 stable-baselines3==2.2.1
 swig==4.2.0
