@@ -1,0 +1,13 @@
+torch==2.2.1
+torchvision==0.17.1
+tqdm==4.66.2
+stable-baselines3==2.2.1
+swig==4.2.0
+ale-py==0.8.1
+autorom==0.6.1
+autorom-accept-rom-license==0.6.1
+gymnasium==0.29.1
+matplotlib==3.8.3
+numpy
+pillow
+moviepy

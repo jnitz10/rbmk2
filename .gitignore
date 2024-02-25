@@ -1,0 +1,8 @@
+runs/*
+log/*
+tmp/*
+.idea/
+__pycache__/
+environment.yml
+playground.py
+train.sh
