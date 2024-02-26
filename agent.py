@@ -1,4 +1,3 @@
-import socket
 from collections import deque
 from datetime import datetime
 
@@ -10,14 +9,12 @@ import torch
 import torch.optim as optim
 import torch.utils.tensorboard as tb
 import numpy as np
-import gymnasium as gym
 import os
 from typing import Optional, Tuple, Union
 from tqdm import tqdm
-import time
 
 from utils import make_venv, make_atari_env
-from utils.type_aliases import Transition, NumpyObs, Action, PyTorchObs
+from utils.type_aliases import Transition, NumpyObs, PyTorchObs
 
 
 class Agent:
@@ -91,7 +88,7 @@ class Agent:
             # PER params
             alpha: float = 0.2,
             beta: float = 0.6,
-            beta_amortization : int = 3000000,
+            beta_amortization: int = 3000000,
             prior_eps: float = 1e-6,
             # Categorical DQN params
             v_min: float = -10.0,
@@ -181,10 +178,7 @@ class Agent:
 
         return next_obses, rewards, dones
 
-    def train(self, n_learning_steps):
-        obses, _ = self.venv.reset()
-
-        # TODO: refactor this
+    def populate_buffer(self):
         with tqdm(total=self.learn_start, desc="Filling buffer") as pbar:
             while len(self.memory) < self.learn_start:
                 actions = self.select_actions(obses)
@@ -192,15 +186,21 @@ class Agent:
                 transition = (obses, actions, rewards, dones, next_obses)
                 self.store_transition(transition)
                 obses = next_obses
+                self.dqn.reset_noise()
                 if len(self.memory) % 1000 == 0:
                     pbar.update(1000)
                     pbar.set_postfix_str(f"{len(self.memory)} frames so far...")
                 pbar.update(len(self.memory) - pbar.n)
 
+    def train(self, n_learning_steps):
+        obses, _ = self.venv.reset()
+
+        if len(self.memory) < self.learn_start:
+            self.populate_buffer()
+
         pbar = tqdm(range(n_learning_steps), desc="Training Progress")
 
-        for i in pbar:
-        #for i in range(n_learning_steps):
+        for _ in pbar:
             actions = self.select_actions(obses)
             next_obses, rewards, dones = self.step_environment(actions)
             transition = (obses, actions, rewards, dones, next_obses)
@@ -221,8 +221,6 @@ class Agent:
                 pbar.set_postfix(
                     avg_loss="{:.2f}".format(average_loss), avg_ep_reward="{:.2f}".format(average_ep_rew), refresh=True
                 )
-                #print(f"avg loss: {average_loss}")
-                #print(f"avg reward: {average_ep_rew}")
 
             if self.learn_step_counter % 2000 == 0:
                 self.save_checkpoint()
@@ -332,7 +330,6 @@ class Agent:
             'target_net': self.target_net.state_dict(),
         }, self.target_chkpt)
 
-# TODO: get rid of everything related to saving replay buffer
     def load_checkpoint(self):
         print('... loading checkpoint ...')
         self.dqn.load_state_dict(torch.load(self.dqn_chkpt)['q_eval'])
@@ -364,4 +361,3 @@ class Agent:
 
         with open(test_tb_path, 'w') as f:
             f.write('Testing logs directory.')
-
