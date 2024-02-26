@@ -180,6 +180,7 @@ class Agent:
 
     def populate_buffer(self):
         with tqdm(total=self.learn_start, desc="Filling buffer") as pbar:
+            obses, _ = self.venv.reset()
             while len(self.memory) < self.learn_start:
                 actions = self.select_actions(obses)
                 next_obses, rewards, dones = self.step_environment(actions)
