@@ -13,7 +13,7 @@ import os
 from typing import Optional, Tuple, Union
 from tqdm import tqdm
 
-from utils import make_venv, make_atari_env
+from utils import make_venv, make_atari_env, make_record_env
 from utils.type_aliases import Transition, NumpyObs, PyTorchObs
 
 
@@ -73,29 +73,30 @@ class Agent:
     """
 
     def __init__(
-            self,
-            env_id: str = 'ALE/Breakout-v5',
-            n_envs: int = 1,
-            memory_size: int = 1000000,
-            batch_size: int = 32,
-            n_step: int = 3,
-            target_update: int = 8000,
-            gamma: float = 0.99,
-            chkpt_dir: str = 'tmp/',
-            log_dir: str = 'runs/',
-            optimizer_params: Optional[dict] = None,
-            learn_start: int = 20000,
-            # PER params
-            alpha: float = 0.2,
-            beta: float = 0.6,
-            beta_amortization: int = 3000000,
-            prior_eps: float = 1e-6,
-            # Categorical DQN params
-            v_min: float = -10.0,
-            v_max: float = 10.0,
-            n_atoms: int = 51,
+        self,
+        env_id: str = "ALE/Breakout-v5",
+        n_envs: int = 1,
+        memory_size: int = 1000000,
+        batch_size: int = 32,
+        n_step: int = 3,
+        target_update: int = 8000,
+        gamma: float = 0.99,
+        chkpt_dir: str = "tmp/",
+        log_dir: str = "runs/",
+        optimizer_params: Optional[dict] = None,
+        learn_start: int = 20000,
+        # PER params
+        alpha: float = 0.2,
+        beta: float = 0.6,
+        beta_amortization: int = 3000000,
+        prior_eps: float = 1e-6,
+        # Categorical DQN params
+        v_min: float = -10.0,
+        v_max: float = 10.0,
+        n_atoms: int = 51,
     ):
         self.venv = make_venv(env_id, n_envs)
+        self.env_id = env_id
         self.obs_space = self.venv.observation_space
         self.action_dim = self.venv.action_space[0].n
         self.n_envs = n_envs
@@ -107,15 +108,16 @@ class Agent:
         self.is_test = False
         self.learn_step_counter = 0
         self.episodes = 0
-        self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.learn_start = learn_start
 
         # Checkpoint and log directories
-        self.chkpt_dir = os.path.join(chkpt_dir, env_id.lstrip('ALE/'))
+        self.chkpt_dir = os.path.join(chkpt_dir, env_id.lstrip("ALE/"))
         current_time = datetime.now().strftime("%b%d_%H-%M-%S")
-        self.log_dir = os.path.join(log_dir, current_time + "_" + env_id.lstrip('ALE/'))
-        self.dqn_chkpt = os.path.join(chkpt_dir, 'dqn')
-        self.target_chkpt = os.path.join(chkpt_dir, 'target')
+        self.log_dir = os.path.join(log_dir, current_time + "_" + env_id.lstrip("ALE/"))
+        self.dqn_chkpt = os.path.join(self.chkpt_dir, "dqn")
+        self.target_chkpt = os.path.join(self.chkpt_dir, "target")
+        self.video_dir = os.path.join("videos/", env_id.lstrip("ALE/"))
 
         # PER
         # TODO: decide on how to implement saving/loading of buffer
@@ -123,19 +125,21 @@ class Agent:
         self.beta_amortization = beta_amortization
         self.prior_eps = prior_eps
         self.memory = ReplayBuffer(
-            self.obs_space, n_envs=n_envs,
-            size=memory_size, batch_size=batch_size,
-            alpha=alpha, gamma=gamma, n_step=n_step,
-            prior_eps=prior_eps
+            self.obs_space,
+            n_envs=n_envs,
+            size=memory_size,
+            batch_size=batch_size,
+            alpha=alpha,
+            gamma=gamma,
+            n_step=n_step,
+            prior_eps=prior_eps,
         )
 
         # Categorical
         self.v_min = v_min
         self.v_max = v_max
         self.n_atoms = n_atoms
-        self.support = torch.linspace(
-            self.v_min, self.v_max, n_atoms
-        ).to(self.device)
+        self.support = torch.linspace(self.v_min, self.v_max, n_atoms).to(self.device)
         self.delta_z = (self.v_max - self.v_min) / (self.n_atoms - 1)
 
         # Network
@@ -143,7 +147,9 @@ class Agent:
         self.target_net = DQN(out_dim=self.action_dim, n_atoms=n_atoms).to(self.device)
         self.target_net.load_state_dict(self.dqn.state_dict())
         self.target_net.eval()
-        optimizer_params = optimizer_params if optimizer_params else {'lr': 6.25e-5, 'eps': 1.5e-4}
+        optimizer_params = (
+            optimizer_params if optimizer_params else {"lr": 6.25e-5, "eps": 1.5e-4}
+        )
         self.optimizer = optim.Adam(self.dqn.parameters(), **optimizer_params)
         self.tb_writer = tb.SummaryWriter(self.log_dir)
 
@@ -164,17 +170,19 @@ class Agent:
             actions = (dist * self.support).sum(2).argmax(1)
             return actions.cpu().numpy()
 
-    def step_environment(self, actions: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    def step_environment(
+        self, actions: np.ndarray
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
         next_obses, rewards, terminateds, truncateds, infos = self.venv.step(actions)
         dones = terminateds | truncateds
-        if 'episode' in infos and len(self.memory) > self.learn_start:
-            ep_rewards = infos['episode']['r']
-            completed_eps = infos['_episode']
+        if "episode" in infos and len(self.memory) > self.learn_start:
+            ep_rewards = infos["episode"]["r"]
+            completed_eps = infos["_episode"]
             eps = ep_rewards[completed_eps]
             for ep in eps:
                 self.episodes += 1
                 self.ep_rewards.append(ep)
-                self.tb_writer.add_scalar('Episode Reward', ep, self.episodes)
+                self.tb_writer.add_scalar("Episode Reward", ep, self.episodes)
 
         return next_obses, rewards, dones
 
@@ -220,17 +228,24 @@ class Agent:
                 average_loss = sum(self.losses) / max(len(self.losses), 1)
                 average_ep_rew = sum(self.ep_rewards) / max(len(self.ep_rewards), 1)
                 pbar.set_postfix(
-                    avg_loss="{:.2f}".format(average_loss), avg_ep_reward="{:.2f}".format(average_ep_rew), refresh=True
+                    avg_loss="{:.2f}".format(average_loss),
+                    avg_ep_reward="{:.2f}".format(average_ep_rew),
+                    refresh=True,
                 )
 
             if self.learn_step_counter % 2000 == 0:
                 self.save_checkpoint()
 
+            if self.learn_step_counter % 50000 == 0:
+                self.record(10)
+
             if self.learn_step_counter % self.target_update == 0:
                 self.update_target_network()
 
     def learn(self):
-        obses, actions, rewards, dones, next_obses, weights, indices = self.memory.sample_batch(self.beta)
+        obses, actions, rewards, dones, next_obses, weights, indices = (
+            self.memory.sample_batch(self.beta)
+        )
         torch.autograd.set_detect_anomaly(True)
 
         obses = torch.tensor(obses, device=self.device)
@@ -255,7 +270,8 @@ class Agent:
 
             # target_support = Tz, apply Bellman operator to Tz
             target_support = rewards + (1 - dones.float()) * (
-                        self.gamma ** self.n_step) * self.support.unsqueeze(0)
+                self.gamma**self.n_step
+            ) * self.support.unsqueeze(0)
             target_support = target_support.clamp(min=self.v_min, max=self.v_max)
             # L2 projection of target_support onto support
             normalized_support_indices = (target_support - self.v_min) / self.delta_z
@@ -266,21 +282,30 @@ class Agent:
             upper[(lower < (self.n_atoms - 1)) * (lower == upper)] += 1
 
             offset = (
-                torch.linspace(
-                    0, (self.batch_size - 1) * self.n_atoms, self.batch_size
-                ).long()
+                torch.linspace(0, (self.batch_size - 1) * self.n_atoms, self.batch_size)
+                .long()
                 .unsqueeze(1)
                 .expand(self.batch_size, self.n_atoms)
                 .to(self.device)
             )
 
-            proj_dist = torch.zeros((self.batch_size, self.n_atoms), device=self.device).float()
+            proj_dist = torch.zeros(
+                (self.batch_size, self.n_atoms), device=self.device
+            ).float()
 
             proj_dist.view(-1).index_add_(
-                0, (lower + offset).view(-1), (target_actions * (upper.float() - normalized_support_indices)).view(-1)
+                0,
+                (lower + offset).view(-1),
+                (target_actions * (upper.float() - normalized_support_indices)).view(
+                    -1
+                ),
             )
             proj_dist.view(-1).index_add_(
-                0, (upper + offset).view(-1), (target_actions * (normalized_support_indices - lower.float())).view(-1)
+                0,
+                (upper + offset).view(-1),
+                (target_actions * (normalized_support_indices - lower.float())).view(
+                    -1
+                ),
             )
 
         elementwise_loss = -torch.sum(proj_dist * log_prob_actions, 1)
@@ -292,7 +317,7 @@ class Agent:
         clip_grad_norm_(self.dqn.parameters(), 10.0)
         self.optimizer.step()
 
-        self.tb_writer.add_scalar('Loss', loss.detach(), self.learn_step_counter)
+        self.tb_writer.add_scalar("Loss", loss.detach(), self.learn_step_counter)
         self.memory.update_priorities(indices, elementwise_loss.detach().cpu().numpy())
         # reset noise in networks
         self.dqn.reset_noise()
@@ -301,45 +326,72 @@ class Agent:
         return loss.detach().cpu().numpy()
 
     def play(self, n_episodes):
-        play_env = make_atari_env(is_play=True)
+        play_env = make_atari_env(env_id=self.env_id, is_play=True)
 
         obs, _ = play_env.reset()
 
         for i in range(n_episodes):
             done = False
             while not done:
-                action = self.select_actions(torch.from_numpy(np.array(obs)).unsqueeze(0).to(self.device))[0]
-                print(action)
+                action = self.select_actions(
+                    torch.from_numpy(np.array(obs)).unsqueeze(0).to(self.device)
+                )[0]
                 next_obs, reward, terminated, truncated, info = play_env.step(action)
                 done = terminated or truncated
                 obs = next_obs
             obs, _ = play_env.reset()
         play_env.close()
 
+    def record(self, n_episodes):
+        video_folder = os.path.join(
+            self.video_dir, "step_" + str(self.learn_step_counter)
+        )
+        env = make_record_env(env_id=self.env_id, video_folder=video_folder)
+
+        for i in range(n_episodes):
+            obs, _ = env.reset()
+            done = False
+            while not done:
+                action = self.select_actions(
+                    torch.from_numpy(np.array(obs)).unsqueeze(0).to(self.device)
+                )[0]
+                next_obs, reward, terminated, truncated, info = env.step(action)
+                done = terminated or truncated
+                obs = next_obs
+        env.close()
+
     def update_target_network(self):
         self.target_net.load_state_dict(self.dqn.state_dict())
 
     def save_checkpoint(self):
-        torch.save({
-            'q_eval': self.dqn.state_dict(),
-            'optimizer': self.optimizer.state_dict(),
-            'learn_step_counter': self.learn_step_counter,
-            'beta': self.beta,
-            'episodes': self.episodes
-        }, self.dqn_chkpt)
-        torch.save({
-            'target_net': self.target_net.state_dict(),
-        }, self.target_chkpt)
+        torch.save(
+            {
+                "q_eval": self.dqn.state_dict(),
+                "optimizer": self.optimizer.state_dict(),
+                "learn_step_counter": self.learn_step_counter,
+                "beta": self.beta,
+                "episodes": self.episodes,
+            },
+            self.dqn_chkpt,
+        )
+        torch.save(
+            {
+                "target_net": self.target_net.state_dict(),
+            },
+            self.target_chkpt,
+        )
 
     def load_checkpoint(self):
-        print('... loading checkpoint ...')
-        self.dqn.load_state_dict(torch.load(self.dqn_chkpt)['q_eval'])
-        self.optimizer.load_state_dict(torch.load(self.dqn_chkpt)['optimizer'])
-        self.learn_step_counter = torch.load(self.dqn_chkpt)['learn_step_counter']
-        self.beta = torch.load(self.dqn_chkpt)['beta']
-        self.target_net.load_state_dict(torch.load(self.target_chkpt)['target_net'])
-        self.episodes = torch.load(self.dqn_chkpt)['episodes']
-        print(f'... checkpoint loaded ... learn_step_counter: {self.learn_step_counter}')
+        print("... loading checkpoint ...")
+        self.dqn.load_state_dict(torch.load(self.dqn_chkpt)["q_eval"])
+        self.optimizer.load_state_dict(torch.load(self.dqn_chkpt)["optimizer"])
+        self.learn_step_counter = torch.load(self.dqn_chkpt)["learn_step_counter"]
+        self.beta = torch.load(self.dqn_chkpt)["beta"]
+        self.target_net.load_state_dict(torch.load(self.target_chkpt)["target_net"])
+        self.episodes = torch.load(self.dqn_chkpt)["episodes"]
+        print(
+            f"... checkpoint loaded ... learn_step_counter: {self.learn_step_counter}"
+        )
 
     def startup(self):
         if not os.path.exists(self.chkpt_dir):
@@ -347,18 +399,18 @@ class Agent:
         if not os.path.exists(self.log_dir):
             os.mkdir(self.log_dir)
         if os.path.exists(self.dqn_chkpt) and os.path.exists(self.target_chkpt):
-            print('Checkpoint found...')
+            print("Checkpoint found...")
             self.load_checkpoint()
         else:
-            print('No checkpoint found...')
+            print("No checkpoint found...")
 
     def test_directory_setup(self):
-        test_chkpt_path = os.path.join(self.chkpt_dir, 'test_chkpt_dir.txt')
+        test_chkpt_path = os.path.join(self.chkpt_dir, "test_chkpt_dir.txt")
 
-        test_tb_path = os.path.join(self.log_dir, 'test_log_dir.txt')
+        test_tb_path = os.path.join(self.log_dir, "test_log_dir.txt")
 
-        with open(test_chkpt_path, 'w') as f:
-            f.write('Testing checkpoint directory.')
+        with open(test_chkpt_path, "w") as f:
+            f.write("Testing checkpoint directory.")
 
-        with open(test_tb_path, 'w') as f:
-            f.write('Testing logs directory.')
+        with open(test_tb_path, "w") as f:
+            f.write("Testing logs directory.")

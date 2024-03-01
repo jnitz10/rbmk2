@@ -1,6 +1,7 @@
 runs/*
 log/*
 tmp/*
+videos/*
 .idea/
 __pycache__/
 environment.yml
